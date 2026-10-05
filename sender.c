@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
     a.sin_family = AF_INET;
     a.sin_port = htons(atoi(argv[2]));
     inet_pton(AF_INET, argv[1], &a.sin_addr);
-    if (connect(s, (struct sockaddr *)&a, sizeof a) < 0) { perror("connect"); return 1; }
+    if (connect(s, (struct sockaddr *)&a, sizeof a) < 0) { perror("Connect"); return 1; }
 
     FILE *f = fopen(argv[3], "rb");
     if (!f) { perror("fopen"); return 1; }
@@ -25,12 +25,12 @@ int main(int argc, char **argv) {
         size_t sent = 0;
         while (sent < n) {
             ssize_t w = send(s, buf + sent, n - sent, 0);
-            if (w <= 0) { perror("send"); return 1; }
+            if (w <= 0) { perror("Send"); return 1; }
             sent += w;
         }
     }
     fclose(f);
     close(s);
-    printf("file sent\n");
+    printf("File sent\n");
     return 0;
 }
