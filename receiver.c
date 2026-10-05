@@ -18,9 +18,9 @@ int main(int argc, char **argv) {
     a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(srv, (struct sockaddr *)&a, sizeof a) < 0) { perror("bind"); return 1; }
     listen(srv, 1);
-    printf("waiting...\n");
+    printf("Waiting...\n");
     int c = accept(srv, NULL, NULL);
-    if (c < 0) { perror("accept"); return 1; }
+    if (c < 0) { perror("Accept"); return 1; }
 
     FILE *f = fopen(argv[2], "wb");
     if (!f) { perror("fopen"); return 1; }
@@ -30,6 +30,6 @@ int main(int argc, char **argv) {
         fwrite(buf, 1, n, f);
     fclose(f);
     close(c);
-    printf("file received\n");
+    printf("File received\n");
     return 0;
 }
