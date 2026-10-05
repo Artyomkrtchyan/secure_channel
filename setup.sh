@@ -1,5 +1,4 @@
 #!/bin/bash
-# setup.sh  -  run with: sudo bash setup.sh
 set -e
 
 # 1. create namespaces
@@ -24,7 +23,7 @@ ip link set d2_wan  netns dev2
 ip link set d2_lan  netns dev2
 ip link set pc2_eth netns pc2
 
-# 4. PC1 and PC2  (MTU 1340 -> MSS 1300)
+# 4. PC1 and PC2  MTU 1340 | MSS 1300
 ip netns exec pc1 ip addr add 10.10.10.1/24 dev pc1_eth
 ip netns exec pc1 ip link set pc1_eth mtu 1340 up
 ip netns exec pc1 ip link set lo up
