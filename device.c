@@ -22,10 +22,9 @@ static int role;
 static const char *LAN_IF, *WAN_IF, *MY_IP, *PEER_IP;
 static uint32_t MY_PREFIX, PEER_PREFIX;
 static uint8_t key[32];
-static uint64_t send_ctr = 0;  
-static uint64_t recv_ctr = 0;   
+static uint64_t send_ctr = 0;   /* packets I encrypted */
 
-/* ---------------- helpers ---------------- */
+/* ---------------- small helpers ---------------- */
 static void die(const char *msg) { perror(msg); exit(1); }
 
 static void read_exact(int fd, uint8_t *buf, int n) {
@@ -46,7 +45,7 @@ static void write_all(int fd, const uint8_t *buf, int n) {
     }
 }
 
-/* ---------------- Diffie-Hellman ---------------- */
+/* ---------------- Diffie-Hellman (RFC 3526 group 14) ---------------- */
 static void handshake(void) {
     BN_CTX *ctx = BN_CTX_new();
     BIGNUM *p = BN_get_rfc3526_prime_2048(NULL);
@@ -58,12 +57,12 @@ static void handshake(void) {
 
     BN_set_word(g, 2);
     BN_set_word(one, 1);
-    BN_sub(pm1, p, one);                     
-    BN_rand(priv, 512, -1, 0);               
+    BN_sub(pm1, p, one);                      
+    BN_rand(priv, 512, -1, 0);                
     BN_mod_exp(pub, g, priv, p, ctx);         
     BN_bn2binpad(pub, mybuf, 256);
 
-    if (role == 1) {                         
+    if (role == 1) {                          /* Device1 = client */
         struct sockaddr_in a;
         memset(&a, 0, sizeof a);
         a.sin_family = AF_INET;
@@ -75,7 +74,7 @@ static void handshake(void) {
             close(fd);
             sleep(1);
         }
-    } else {                                  
+    } else {                                  /* Device2 = server */
         struct sockaddr_in a;
         int one_opt = 1;
         int srv = socket(AF_INET, SOCK_STREAM, 0);
@@ -101,7 +100,7 @@ static void handshake(void) {
         fprintf(stderr, "bad public value\n");
         exit(1);
     }
-    BN_mod_exp(shared, peer, priv, p, ctx);  
+    BN_mod_exp(shared, peer, priv, p, ctx);   
     BN_bn2binpad(shared, sharedbuf, 256);
 
     /* AES key = SHA-256(shared secret) */
@@ -129,7 +128,7 @@ static int gcm_encrypt(const uint8_t *nonce, const uint8_t *aad, int aad_len,
     ok &= EVP_EncryptInit_ex(c, EVP_aes_256_gcm(), NULL, NULL, NULL);
     ok &= EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, 12, NULL);
     ok &= EVP_EncryptInit_ex(c, NULL, NULL, key, nonce);
-    ok &= EVP_EncryptUpdate(c, NULL, &outl, aad, aad_len);   
+    ok &= EVP_EncryptUpdate(c, NULL, &outl, aad, aad_len);       /* authenticated only */
     ok &= EVP_EncryptUpdate(c, out, &outl, in, len);
     ok &= EVP_EncryptFinal_ex(c, out + outl, &outl);
     ok &= EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_GET_TAG, TAG_LEN, tag);
@@ -137,7 +136,7 @@ static int gcm_encrypt(const uint8_t *nonce, const uint8_t *aad, int aad_len,
     return ok;
 }
 
-
+/* returns 1 only if the tag is correct */
 static int gcm_decrypt(const uint8_t *nonce, const uint8_t *aad, int aad_len,
                        const uint8_t *in, int len, const uint8_t *tag, uint8_t *out) {
     EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
@@ -171,15 +170,17 @@ static int is_pc_ip(const uint8_t *a) {
     return a[0] == 10 && ((a[1] == 10 && a[2] == 10) || (a[1] == 20 && a[2] == 20));
 }
 
-/* ---------------- main packet function ---------------- */
+/* ---------------- main packet function ----------------
+ * encrypt=1: frame came from my PC.  encrypt=0: frame came from the peer device.
+ * Writes the new frame into out. Returns its length, or 0 = drop. */
 static int process(const uint8_t *in, int len, int encrypt, uint8_t *out) {
     if (len < 14) return 0;
     uint16_t eth_type = (in[12] << 8) | in[13];
-    if (eth_type == 0x0806) {                    
+    if (eth_type == 0x0806) {                    /* ARP: pass unchanged */
         memcpy(out, in, len);
         return len;
     }
-    if (eth_type != 0x0800 || len < 34) return 0;   
+    if (eth_type != 0x0800 || len < 34) return 0;   /* only IPv4 */
 
     const uint8_t *ip = in + 14;
     int ihl = (ip[0] & 0x0F) * 4;
@@ -188,10 +189,10 @@ static int process(const uint8_t *in, int len, int encrypt, uint8_t *out) {
     const uint8_t *src = ip + 12, *dst = ip + 16;
     if (ihl < 20 || total < ihl || total > len - 14) return 0;
 
-
+    /* on the wan side ignore traffic that is not between the PCs (handshake) */
     if (!encrypt && !(is_pc_ip(src) || is_pc_ip(dst))) return 0;
 
-    if (proto != 6) {                            
+    if (proto != 6) {                            /* not TCP (ping...): unchanged */
         memcpy(out, in, len);
         return len;
     }
@@ -210,27 +211,31 @@ static int process(const uint8_t *in, int len, int encrypt, uint8_t *out) {
     int newlen = pllen;
 
     if (pllen > 0) {
-        uint8_t aad[16], nonce[12];
-        memcpy(aad, src, 4);                     
-        memcpy(aad + 4, dst, 4);
-        memcpy(aad + 8, seg, 8);
+    uint8_t aad[16], nonce[12];
+    memcpy(aad, src, 4);
+    memcpy(aad + 4, dst, 4);
+    memcpy(aad + 8, seg, 8);
 
-        if (encrypt) {
-            make_nonce(nonce, MY_PREFIX, send_ctr);
-            send_ctr++;
-            if (!gcm_encrypt(nonce, aad, 16, pl, pllen, opl, opl + pllen)) return 0;
-            newlen = pllen + TAG_LEN;           
-        } else {
-            if (pllen < TAG_LEN) return 0;
-            make_nonce(nonce, PEER_PREFIX, recv_ctr);
-            newlen = pllen - TAG_LEN;
-            if (!gcm_decrypt(nonce, aad, 16, pl, newlen, pl + newlen, opl)) {
-                printf("Bad tag -> packet dropped\n");
-                return 0;
-            }
-            recv_ctr++;
+    if (encrypt) {
+        uint64_t ctr = send_ctr++;
+        make_nonce(nonce, MY_PREFIX, ctr);
+        for (int i = 0; i < 8; i++) opl[i] = ctr >> (56 - 8 * i); 
+        if (!gcm_encrypt(nonce, aad, 16, pl, pllen, opl + 8, opl + 8 + pllen))
+            return 0;
+        newlen = 8 + pllen + TAG_LEN;
+    } else {
+        if (pllen < 8 + TAG_LEN) return 0;
+        uint64_t ctr = 0;
+        for (int i = 0; i < 8; i++) ctr = (ctr << 8) | pl[i];
+        make_nonce(nonce, PEER_PREFIX, ctr);
+        int clen = pllen - 8 - TAG_LEN;
+        if (!gcm_decrypt(nonce, aad, 16, pl + 8, clen, pl + 8 + clen, opl)) {
+            printf("Bad tag -> packet dropped\n");
+            return 0;
         }
+        newlen = clen;
     }
+}
 
     /* fix IP length + checksum */
     int new_total = ihl + thl + newlen;
@@ -248,7 +253,7 @@ static int process(const uint8_t *in, int len, int encrypt, uint8_t *out) {
     pseudo[10] = tcp_len >> 8; pseudo[11] = tcp_len & 0xFF;
     otcp[16] = otcp[17] = 0;
     uint32_t s = csum_add(0, pseudo, 12);
-    s = csum_add(s, otcp, tcp_len);             
+    s = csum_add(s, otcp, tcp_len);              /* header + payload are contiguous */
     c = csum_end(s);
     otcp[16] = c >> 8; otcp[17] = c & 0xFF;
 
@@ -305,7 +310,7 @@ int main(int argc, char **argv) {
             socklen_t fl = sizeof from;
             int n = recvfrom(fds[i].fd, frame, 65535, 0, (struct sockaddr *)&from, &fl);
             if (n <= 0) continue;
-            if (from.sll_pkttype == PACKET_OUTGOING) continue; 
+            if (from.sll_pkttype == PACKET_OUTGOING) continue;   
 
             int from_lan = (i == 0);
             int outlen = process(frame, n, from_lan, out);

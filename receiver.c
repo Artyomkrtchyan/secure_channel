@@ -1,4 +1,3 @@
-/* receiver.c   usage: ./receiver 5000 received.bin */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +6,7 @@
 #include <netinet/in.h>
 
 int main(int argc, char **argv) {
-    if (argc != 3) { fprintf(stderr, "usage: %s port outfile\n", argv[0]); return 1; }
+    if (argc != 3) { fprintf(stderr, "Usage: %s port outfile\n", argv[0]); return 1; }
     int srv = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
     setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
@@ -16,7 +15,7 @@ int main(int argc, char **argv) {
     a.sin_family = AF_INET;
     a.sin_port = htons(atoi(argv[1]));
     a.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(srv, (struct sockaddr *)&a, sizeof a) < 0) { perror("bind"); return 1; }
+    if (bind(srv, (struct sockaddr *)&a, sizeof a) < 0) { perror("Bind"); return 1; }
     listen(srv, 1);
     printf("Waiting...\n");
     int c = accept(srv, NULL, NULL);

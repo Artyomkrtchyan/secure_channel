@@ -8,7 +8,7 @@
 #include <arpa/inet.h>
 
 int main(int argc, char **argv) {
-    if (argc != 4) { fprintf(stderr, "usage: %s ip port file\n", argv[0]); return 1; }
+    if (argc != 4) { fprintf(stderr, "Usage: %s ip port file\n", argv[0]); return 1; }
     int s = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in a;
     memset(&a, 0, sizeof a);
